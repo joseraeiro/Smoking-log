@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.example.smokinglog
 
 import android.os.Bundle
@@ -61,7 +63,6 @@ private enum class Screen(val label: String, val icon: ImageVector) {
     INSIGHTS("Guide", Icons.Default.QueryStats), SETTINGS("Settings", Icons.Default.Settings)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SmokingLogApp(vm: MainViewModel = viewModel()) {
     val entries by vm.entries.collectAsState()
