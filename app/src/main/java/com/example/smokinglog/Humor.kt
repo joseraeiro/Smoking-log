@@ -100,18 +100,50 @@ object Humor {
         ),
     )
 
-    private val smokedMessages = listOf(
-        "Honesty remains an excellent navigation system.",
-        "Recorded without judgement, paperwork, or poetry of unusual cruelty.",
-        "The universe continues, but now with better data.",
-        "One accurate tap beats twelve optimistic guesses.",
+    private val smokedMessages = combine(
+        listOf(
+            "The event has been entered into the log by clerks who deny having seen anything.",
+            "Honesty remains an excellent navigation system, despite its alarming lack of cup holders.",
+            "The universe continues, but now with one fewer unlabelled incident.",
+            "A precise tap has defeated twelve optimistic guesses in formal combat.",
+            "The cigarette has been counted and may no longer travel under an assumed name.",
+            "Your log has accepted the evidence with the solemnity of a toaster receiving bread.",
+            "The smoking event is now official, which has disappointed its plans for a mysterious past.",
+            "A tiny bureaucrat inside the phone has stamped this entry ‘surprisingly candid’.",
+            "The record now contains another fact and is already demanding a larger clipboard.",
+            "This cigarette has joined the statistics, where all dramatic gestures become decimals.",
+        ),
+        listOf(
+            "No judgement was available, so accuracy has been substituted.",
+            "The paperwork is immaculate and almost certainly overqualified.",
+            "Proceed normally; honesty has already done the difficult bit.",
+            "The Guide recommends neither panic nor creative accounting.",
+            "Tomorrow's chart will know what to do with it, more or less.",
+            "It is not victory or defeat; it is useful data wearing sensible shoes.",
+        ),
     )
 
-    private val resistedMessages = listOf(
-        "Victory logged. The craving has been informed that it is not management.",
-        "Nicely navigated. Your lungs have sent a very small thank-you card.",
-        "Urge resisted. Somewhere, a clipboard has acquired a gold star.",
-        "Recorded: you, one; temporary chemical melodrama, nil.",
+    private val resistedMessages = combine(
+        listOf(
+            "The craving has been denied docking clearance and is circling the kitchen looking embarrassed.",
+            "Your lungs have sent a thank-you card, though neither lung will admit choosing the glitter.",
+            "A temporary chemical melodrama has been cancelled due to insufficient audience interest.",
+            "The urge demanded immediate attention and received a glass of water instead.",
+            "You have outwaited a craving, a creature famous for owning a watch but not understanding it.",
+            "The cigarette that did not happen has been awarded invisibility with full ceremonial honours.",
+            "Free will has made an unscheduled appearance and frightened several minor impulses.",
+            "The nicotine committee called an emergency meeting and discovered you were not attending.",
+            "You declined to smoke, causing the habit to reread the contract in mounting disbelief.",
+            "One urge has passed without becoming an event, which is excellent project management.",
+        ),
+        listOf(
+            "Somewhere, an unnecessarily official clipboard has acquired a gold star.",
+            "This counts, even if no brass band was available at short notice.",
+            "Remain casually proud; excessive smugness attracts forms in triplicate.",
+            "The universe has recorded the point in your favour and misplaced the receipt.",
+            "Take the win before causality notices and asks for additional identification.",
+            "Nicely navigated; no cape, prophecy, or committee approval was required.",
+        ),
     )
 
     fun next(topic: HumorTopic, previous: String? = null, random: Random = Random.Default): String {
@@ -126,4 +158,8 @@ object Humor {
     fun resisted(random: Random = Random.Default): String = resistedMessages.random(random)
 
     fun allFor(topic: HumorTopic): List<String> = messages.getValue(topic)
+
+    fun allSmokedFollowUps(): List<String> = smokedMessages
+
+    fun allResistedCompliments(): List<String> = resistedMessages
 }

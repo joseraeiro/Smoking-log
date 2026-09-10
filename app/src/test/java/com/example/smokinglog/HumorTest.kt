@@ -28,4 +28,13 @@ class HumorTest {
         assertTrue(Humor.smoked(1.0, Random(1)).startsWith("Whole cigarette logged."))
         assertTrue(Humor.smoked(.5, Random(1)).startsWith("Half cigarette logged."))
     }
+
+    @Test fun `action feedback has sixty distinct possibilities each`() {
+        val smoked = Humor.allSmokedFollowUps()
+        val resisted = Humor.allResistedCompliments()
+        assertEquals(60, smoked.size)
+        assertEquals(60, smoked.distinct().size)
+        assertEquals(60, resisted.size)
+        assertEquals(60, resisted.distinct().size)
+    }
 }
