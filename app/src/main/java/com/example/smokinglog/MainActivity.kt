@@ -65,6 +65,10 @@ private enum class Screen(val label: String, val icon: ImageVector, val topic: H
     SETTINGS("Settings", Icons.Default.Settings, HumorTopic.SETTINGS)
 }
 
+private enum class InsightMetric(val label: String) {
+    EQUIVALENTS("Cigarette equivalents"), EVENTS("Smoking events")
+}
+
 @Composable
 private fun SmokingLogApp(vm: MainViewModel = viewModel()) {
     val entries by vm.entries.collectAsState()
@@ -247,30 +251,82 @@ private fun EditDialog(entry: LogEntry, onDismiss: () -> Unit, onSave: (LogEntry
 
 @Composable
 private fun InsightsScreen(entries: List<LogEntry>, bulletin: String) {
-    var days by remember { mutableIntStateOf(7) }
-    val totals = Stats.dayTotals(entries, days, Instant.now(), ZoneId.systemDefault())
-    val amount = totals.sumOf { it.amount }
-    val average = if (days == 0) 0.0 else amount / days
-    val longest = longestGap(entries)
+    val zone = ZoneId.systemDefault()
+    var presetDays by remember { mutableStateOf<Int?>(7) }
+    var customRange by remember { mutableStateOf<Pair<LocalDate, LocalDate>?>(null) }
+    var showRangePicker by remember { mutableStateOf(false) }
+    var metric by remember { mutableStateOf(InsightMetric.EQUIVALENTS) }
+    var metricMenuOpen by remember { mutableStateOf(false) }
+    val totals = presetDays?.let { Stats.dayTotals(entries, it, Instant.now(), zone) }
+        ?: customRange?.let { Stats.rangeTotals(entries, it.first, it.second, zone) }.orEmpty()
+    val metricTotal = when (metric) {
+        InsightMetric.EQUIVALENTS -> totals.sumOf { it.amount }
+        InsightMetric.EVENTS -> totals.sumOf { it.smokingEvents }.toDouble()
+    }
+    val average = metricTotal / totals.size.coerceAtLeast(1)
+    val visibleDates = totals.mapTo(mutableSetOf()) { it.date }
+    val visibleEntries = entries.filter { entry ->
+        Instant.ofEpochMilli(entry.timestamp).atZone(zone).toLocalDate() in visibleDates
+    }
+    val longest = longestGap(visibleEntries)
+    val highest = totals.maxByOrNull {
+        if (metric == InsightMetric.EQUIVALENTS) it.amount else it.smokingEvents.toDouble()
+    }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Text("The Guide", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
         item { CosmicBulletin(bulletin) }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(7, 30).forEach { FilterChip(days == it, { days = it }, label = { Text("$it days") }) }
-        } }
+        item {
+            Box {
+                OutlinedButton(onClick = { metricMenuOpen = true }, Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.SwapVert, null); Spacer(Modifier.width(8.dp))
+                    Text("Showing: ${metric.label}", Modifier.weight(1f), textAlign = TextAlign.Start)
+                    Icon(Icons.Default.ArrowDropDown, null)
+                }
+                DropdownMenu(expanded = metricMenuOpen, onDismissRequest = { metricMenuOpen = false }, modifier = Modifier.fillMaxWidth(.9f)) {
+                    InsightMetric.entries.forEach { option -> DropdownMenuItem(
+                        text = { Text(option.label) },
+                        leadingIcon = { if (metric == option) Icon(Icons.Default.Check, null) },
+                        onClick = { metric = option; metricMenuOpen = false }
+                    ) }
+                }
+            }
+        }
+        item {
+            Column {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(7, 30).forEach { days -> FilterChip(presetDays == days, {
+                        presetDays = days; customRange = null
+                    }, label = { Text("$days days") }) }
+                    FilterChip(presetDays == null, { showRangePicker = true }, label = { Text("Custom") },
+                        leadingIcon = { Icon(Icons.Default.DateRange, null, Modifier.size(18.dp)) })
+                }
+                customRange?.let { range -> Text(
+                    "${range.first.format(DateTimeFormatter.ofPattern("d MMM yyyy"))} — ${range.second.format(DateTimeFormatter.ofPattern("d MMM yyyy"))}",
+                    color = TowelTeal, fontSize = 12.sp
+                ) }
+            }
+        }
         item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard("TOTAL", formatAmount(amount), Modifier.weight(1f))
+            MetricCard(if (metric == InsightMetric.EVENTS) "EVENTS" else "EQUIVALENTS", formatAmount(metricTotal), Modifier.weight(1f))
             MetricCard("DAILY AVG", formatAmount(average), Modifier.weight(1f))
             MetricCard("RESISTED", totals.sumOf { it.resisted }.toString(), Modifier.weight(1f))
         } }
         item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
-            Text("Cigarette equivalents by day", fontWeight = FontWeight.Bold)
-            BarChart(totals, Modifier.fillMaxWidth().height(180.dp))
+            Text("${metric.label} by day", fontWeight = FontWeight.Bold)
+            BarChart(totals, metric, Modifier.fillMaxWidth().height(180.dp))
         } } }
         item { MetricRow("Longest logged interval", longest ?: "Not enough coordinates yet") }
-        item { MetricRow("Highest day", totals.maxByOrNull { it.amount }?.let { "${it.date.format(DateTimeFormatter.ofPattern("EEE d MMM"))}: ${formatAmount(it.amount)}" } ?: "—") }
+        item { MetricRow("Highest day", highest?.let {
+            val value = if (metric == InsightMetric.EQUIVALENTS) it.amount else it.smokingEvents.toDouble()
+            "${it.date.format(DateTimeFormatter.ofPattern("EEE d MMM"))}: ${formatAmount(value)}"
+        } ?: "—") }
         item { Text("These are observations, not medical conclusions. The Guide is useful, but not infallible.", color = TowelTeal, fontSize = 12.sp) }
     }
+    if (showRangePicker) CustomRangeDialog(
+        initialRange = customRange,
+        onDismiss = { showRangePicker = false },
+        onConfirm = { start, end -> customRange = start to end; presetDays = null; showRangePicker = false }
+    )
 }
 
 @Composable private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {
@@ -283,16 +339,53 @@ private fun InsightsScreen(entries: List<LogEntry>, bulletin: String) {
 }
 
 @Composable
-private fun BarChart(totals: List<DayTotal>, modifier: Modifier) {
-    val maximum = max(1.0, totals.maxOfOrNull { it.amount } ?: 1.0)
+private fun BarChart(totals: List<DayTotal>, metric: InsightMetric, modifier: Modifier) {
+    fun DayTotal.value() = if (metric == InsightMetric.EQUIVALENTS) amount else smokingEvents.toDouble()
+    val maximum = max(1.0, totals.maxOfOrNull { it.value() } ?: 1.0)
     Canvas(modifier.padding(top = 18.dp, bottom = 16.dp)) {
         val step = size.width / totals.size.coerceAtLeast(1)
         totals.forEachIndexed { index, day ->
-            val height = (day.amount / maximum * size.height).toFloat()
+            val height = (day.value() / maximum * size.height).toFloat()
             drawLine(FriendlyYellow, Offset(step * index + step / 2, size.height), Offset(step * index + step / 2, size.height - height),
                 strokeWidth = (step * .55f).coerceAtLeast(3f), cap = StrokeCap.Round)
             if (day.resisted > 0) drawCircle(TowelTeal, 5.dp.toPx(), Offset(step * index + step / 2, (size.height - height - 12.dp.toPx()).coerceAtLeast(5.dp.toPx())))
         }
+    }
+}
+
+@Composable
+private fun CustomRangeDialog(
+    initialRange: Pair<LocalDate, LocalDate>?,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalDate, LocalDate) -> Unit,
+) {
+    fun LocalDate.utcMillis() = atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+    val state = rememberDateRangePickerState(
+        initialSelectedStartDateMillis = initialRange?.first?.utcMillis(),
+        initialSelectedEndDateMillis = initialRange?.second?.utcMillis(),
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = state.selectedStartDateMillis != null,
+                onClick = {
+                    val start = Instant.ofEpochMilli(state.selectedStartDateMillis!!).atZone(ZoneOffset.UTC).toLocalDate()
+                    val end = state.selectedEndDateMillis?.let {
+                        Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
+                    } ?: start
+                    onConfirm(start, end)
+                }
+            ) { Text("USE RANGE") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("CANCEL") } },
+    ) {
+        DateRangePicker(
+            state = state,
+            title = { Text("Choose a date interval", Modifier.padding(16.dp)) },
+            headline = { Text("The Guide accepts a beginning and an end", Modifier.padding(horizontal = 16.dp)) },
+            showModeToggle = false,
+        )
     }
 }
 

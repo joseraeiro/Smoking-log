@@ -2,17 +2,27 @@ package com.example.smokinglog.data
 
 import java.time.*
 
-data class DayTotal(val date: LocalDate, val amount: Double, val resisted: Int)
+data class DayTotal(
+    val date: LocalDate,
+    val amount: Double,
+    val smokingEvents: Int,
+    val resisted: Int,
+)
 
 object Stats {
     fun dayTotals(entries: List<LogEntry>, days: Int, now: Instant, zone: ZoneId): List<DayTotal> {
         val today = now.atZone(zone).toLocalDate()
-        return (days - 1 downTo 0).map { offset ->
-            val date = today.minusDays(offset.toLong())
+        return rangeTotals(entries, today.minusDays((days - 1).coerceAtLeast(0).toLong()), today, zone)
+    }
+
+    fun rangeTotals(entries: List<LogEntry>, start: LocalDate, endInclusive: LocalDate, zone: ZoneId): List<DayTotal> {
+        if (endInclusive < start) return emptyList()
+        return generateSequence(start) { current -> current.plusDays(1).takeIf { it <= endInclusive } }.map { date ->
             val matching = entries.filter { Instant.ofEpochMilli(it.timestamp).atZone(zone).toLocalDate() == date }
-            DayTotal(date, matching.filter { it.type == EntryType.SMOKED }.sumOf { it.amount },
+            val smoked = matching.filter { it.type == EntryType.SMOKED }
+            DayTotal(date, smoked.sumOf { it.amount }, smoked.size,
                 matching.count { it.type == EntryType.RESISTED })
-        }
+        }.toList()
     }
 
     fun csv(entries: List<LogEntry>, zone: ZoneId): String = buildString {
