@@ -61,6 +61,7 @@ private enum class Screen(val label: String, val icon: ImageVector) {
     INSIGHTS("Guide", Icons.Default.QueryStats), SETTINGS("Settings", Icons.Default.Settings)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SmokingLogApp(vm: MainViewModel = viewModel()) {
     val entries by vm.entries.collectAsState()
