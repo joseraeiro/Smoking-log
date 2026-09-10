@@ -58,9 +58,11 @@ private fun GuideTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = colors, typography = Typography(), content = content)
 }
 
-private enum class Screen(val label: String, val icon: ImageVector) {
-    TODAY("Today", Icons.Default.RocketLaunch), HISTORY("Log", Icons.Default.MenuBook),
-    INSIGHTS("Guide", Icons.Default.QueryStats), SETTINGS("Settings", Icons.Default.Settings)
+private enum class Screen(val label: String, val icon: ImageVector, val topic: HumorTopic) {
+    TODAY("Today", Icons.Default.RocketLaunch, HumorTopic.TODAY),
+    HISTORY("Log", Icons.Default.MenuBook, HumorTopic.HISTORY),
+    INSIGHTS("Guide", Icons.Default.QueryStats, HumorTopic.INSIGHTS),
+    SETTINGS("Settings", Icons.Default.Settings, HumorTopic.SETTINGS)
 }
 
 @Composable
@@ -68,6 +70,7 @@ private fun SmokingLogApp(vm: MainViewModel = viewModel()) {
     val entries by vm.entries.collectAsState()
     val target by vm.dailyTarget.collectAsState()
     var screen by remember { mutableStateOf(Screen.TODAY) }
+    var bulletin by remember { mutableStateOf(Humor.next(HumorTopic.TODAY)) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -79,7 +82,10 @@ private fun SmokingLogApp(vm: MainViewModel = viewModel()) {
         bottomBar = {
             NavigationBar(containerColor = GuideBlue) {
                 Screen.entries.forEach { item -> NavigationBarItem(
-                    selected = screen == item, onClick = { screen = item },
+                    selected = screen == item, onClick = {
+                        screen = item
+                        bulletin = Humor.next(item.topic, bulletin)
+                    },
                     icon = { Icon(item.icon, null) }, label = { Text(item.label) }
                 ) }
             }
@@ -87,17 +93,17 @@ private fun SmokingLogApp(vm: MainViewModel = viewModel()) {
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (screen) {
-                Screen.TODAY -> TodayScreen(entries, target, vm)
-                Screen.HISTORY -> HistoryScreen(entries, vm)
-                Screen.INSIGHTS -> InsightsScreen(entries)
-                Screen.SETTINGS -> SettingsScreen(entries, target, vm)
+                Screen.TODAY -> TodayScreen(entries, target, bulletin, vm)
+                Screen.HISTORY -> HistoryScreen(entries, bulletin, vm)
+                Screen.INSIGHTS -> InsightsScreen(entries, bulletin)
+                Screen.SETTINGS -> SettingsScreen(entries, target, bulletin, vm)
             }
         }
     }
 }
 
 @Composable
-private fun TodayScreen(entries: List<LogEntry>, target: Double?, vm: MainViewModel) {
+private fun TodayScreen(entries: List<LogEntry>, target: Double?, bulletin: String, vm: MainViewModel) {
     val zone = ZoneId.systemDefault()
     val today = LocalDate.now(zone)
     val todayEntries = entries.filter { Instant.ofEpochMilli(it.timestamp).atZone(zone).toLocalDate() == today }
@@ -109,13 +115,14 @@ private fun TodayScreen(entries: List<LogEntry>, target: Double?, vm: MainViewMo
     var resistDialog by remember { mutableStateOf(false) }
     fun log(value: Double) = vm.log(value) { entry ->
         scope.launch {
-            if (snackbar.showSnackbar("${if (value == 1.0) "Whole" else "Half"} one logged. So long, and thanks for the data.",
+            if (snackbar.showSnackbar(Humor.smoked(value),
                     "UNDO", duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed) vm.delete(entry)
         }
     }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item { Text("Your pocket guide to today", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+            item { CosmicBulletin(bulletin) }
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = GuideBlue), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(20.dp)) {
@@ -154,6 +161,7 @@ private fun TodayScreen(entries: List<LogEntry>, target: Double?, vm: MainViewMo
     }
     if (resistDialog) ResistDialog(onDismiss = { resistDialog = false }) { note, strength ->
         vm.resist(note, strength); resistDialog = false
+        scope.launch { snackbar.showSnackbar(Humor.resisted()) }
     }
 }
 
@@ -185,11 +193,12 @@ private fun ResistDialog(onDismiss: () -> Unit, onSave: (String, Int?) -> Unit) 
 }
 
 @Composable
-private fun HistoryScreen(entries: List<LogEntry>, vm: MainViewModel) {
+private fun HistoryScreen(entries: List<LogEntry>, bulletin: String, vm: MainViewModel) {
     var filter by remember { mutableStateOf<EntryType?>(null) }
     var editing by remember { mutableStateOf<LogEntry?>(null) }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Text("The ship's log", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        CosmicBulletin(bulletin)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(filter == null, { filter = null }, label = { Text("All") })
             FilterChip(filter == EntryType.SMOKED, { filter = EntryType.SMOKED }, label = { Text("Smoked") })
@@ -237,7 +246,7 @@ private fun EditDialog(entry: LogEntry, onDismiss: () -> Unit, onSave: (LogEntry
 }
 
 @Composable
-private fun InsightsScreen(entries: List<LogEntry>) {
+private fun InsightsScreen(entries: List<LogEntry>, bulletin: String) {
     var days by remember { mutableIntStateOf(7) }
     val totals = Stats.dayTotals(entries, days, Instant.now(), ZoneId.systemDefault())
     val amount = totals.sumOf { it.amount }
@@ -245,6 +254,7 @@ private fun InsightsScreen(entries: List<LogEntry>) {
     val longest = longestGap(entries)
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Text("The Guide", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+        item { CosmicBulletin(bulletin) }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(7, 30).forEach { FilterChip(days == it, { days = it }, label = { Text("$it days") }) }
         } }
@@ -287,7 +297,7 @@ private fun BarChart(totals: List<DayTotal>, modifier: Modifier) {
 }
 
 @Composable
-private fun SettingsScreen(entries: List<LogEntry>, target: Double?, vm: MainViewModel) {
+private fun SettingsScreen(entries: List<LogEntry>, target: Double?, bulletin: String, vm: MainViewModel) {
     val context = LocalContext.current
     var targetText by remember(target) { mutableStateOf(target?.let(::formatAmount) ?: "") }
     var message by remember { mutableStateOf<String?>(null) }
@@ -300,6 +310,7 @@ private fun SettingsScreen(entries: List<LogEntry>, target: Double?, vm: MainVie
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Guide settings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+        item { CosmicBulletin(bulletin) }
         item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
             Text("OPTIONAL DAILY TARGET", color = TowelTeal, fontWeight = FontWeight.Bold)
             Text("A navigational aid, never a verdict.", fontSize = 13.sp)
@@ -325,6 +336,19 @@ private fun SettingsScreen(entries: List<LogEntry>, target: Double?, vm: MainVie
 }
 
 @Composable private fun EmptyState(text: String) = Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(text, color = TowelTeal, textAlign = TextAlign.Center) }
+@Composable private fun CosmicBulletin(message: String) = Card(
+    colors = CardDefaults.cardColors(containerColor = TowelTeal.copy(alpha = .12f)),
+    modifier = Modifier.fillMaxWidth()
+) {
+    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+        Icon(Icons.Default.Campaign, contentDescription = null, tint = TowelTeal)
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text("MESSAGE FROM THE GUIDE", color = TowelTeal, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+            Text(message, fontWeight = FontWeight.Medium)
+        }
+    }
+}
 private fun formatAmount(value: Double) = if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(value)
 private fun longestGap(entries: List<LogEntry>): String? {
     val times = entries.filter { it.type == EntryType.SMOKED }.map { it.timestamp }.sorted()
