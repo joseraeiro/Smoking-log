@@ -9,6 +9,7 @@ An offline-first Android smoking log with a cheerfully cosmic point of view. It 
 - Editable, filterable history
 - Today, seven-day, thirty-day, and custom-range totals
 - Dashboard switcher for cigarette equivalents or individual smoking events
+- More than 50 rotating cosmic bulletins for every main screen
 - Daily target that remains deliberately non-judgmental
 - CSV export through Android's document picker
 - Local Room database and DataStore preferences

@@ -25,6 +25,11 @@ android {
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 
+ksp {
+    // Keep Room's migration history in source control once schemas are generated.
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(libs.androidx.core)
     implementation(libs.androidx.activity.compose)

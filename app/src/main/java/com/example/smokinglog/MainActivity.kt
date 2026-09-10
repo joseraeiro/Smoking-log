@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -60,7 +61,7 @@ private fun GuideTheme(content: @Composable () -> Unit) {
 
 private enum class Screen(val label: String, val icon: ImageVector, val topic: HumorTopic) {
     TODAY("Today", Icons.Default.RocketLaunch, HumorTopic.TODAY),
-    HISTORY("Log", Icons.Default.MenuBook, HumorTopic.HISTORY),
+    HISTORY("Log", Icons.AutoMirrored.Filled.MenuBook, HumorTopic.HISTORY),
     INSIGHTS("Guide", Icons.Default.QueryStats, HumorTopic.INSIGHTS),
     SETTINGS("Settings", Icons.Default.Settings, HumorTopic.SETTINGS)
 }

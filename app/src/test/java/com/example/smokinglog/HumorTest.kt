@@ -10,7 +10,7 @@ class HumorTest {
     @Test fun `each screen has several distinct bulletins`() {
         HumorTopic.entries.forEach { topic ->
             val messages = Humor.allFor(topic)
-            assertTrue("$topic needs variety", messages.size >= 5)
+            assertTrue("$topic needs at least 50 messages", messages.size >= 50)
             assertEquals(messages.size, messages.distinct().size)
         }
     }
