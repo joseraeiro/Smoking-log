@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.smokinglog.data.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.time.ZoneId
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val dao = (application as SmokingLogApplication).database.logDao()
@@ -25,4 +26,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun delete(entry: LogEntry) = viewModelScope.launch { dao.delete(entry) }
     fun update(entry: LogEntry) = viewModelScope.launch { dao.update(entry) }
     fun setTarget(value: Double?) = viewModelScope.launch { settings.setDailyTarget(value) }
+    fun importCsv(csv: String, zone: ZoneId, onComplete: (Result<Int>) -> Unit) = viewModelScope.launch {
+        onComplete(runCatching {
+            val imported = Stats.parseCsv(csv, zone)
+            dao.replaceAll(imported)
+            imported.size
+        })
+    }
 }

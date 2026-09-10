@@ -47,4 +47,20 @@ class StatsTest {
         assertTrue(csv.startsWith("date,time,type,amount,note,urge_strength"))
         assertTrue(csv.contains("0.5,\"Tense, then \"\"fine\"\"\""))
     }
+
+    @Test fun `exported csv round trips notes including commas quotes and newlines`() {
+        val original = listOf(
+            LogEntry(timestamp = now.toEpochMilli(), type = EntryType.SMOKED, amount = .5,
+                note = "Tense, then \"fine\"\nand calmer"),
+            LogEntry(timestamp = now.plusSeconds(60).toEpochMilli(), type = EntryType.RESISTED,
+                note = "Walked", urgeStrength = 4),
+        )
+        val parsed = Stats.parseCsv(Stats.csv(original, zone), zone)
+        assertEquals(original.map { it.copy(id = 0) }, parsed)
+    }
+
+    @Test fun `invalid csv is rejected before it can be imported`() {
+        val error = runCatching { Stats.parseCsv("not,a,valid,export", zone) }.exceptionOrNull()
+        assertTrue(error is IllegalArgumentException)
+    }
 }

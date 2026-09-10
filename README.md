@@ -12,6 +12,7 @@ An offline-first Android smoking log with a cheerfully cosmic point of view. It 
 - More than 50 rotating cosmic bulletins for every main screen
 - Daily target that remains deliberately non-judgmental
 - CSV export through Android's document picker
+- Transactional CSV import that validates first and then replaces the local log
 - Local Room database and DataStore preferences
 - Dark, accessible Material 3 interface
 

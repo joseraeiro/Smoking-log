@@ -395,11 +395,26 @@ private fun SettingsScreen(entries: List<LogEntry>, target: Double?, bulletin: S
     val context = LocalContext.current
     var targetText by remember(target) { mutableStateOf(target?.let(::formatAmount) ?: "") }
     var message by remember { mutableStateOf<String?>(null) }
+    var confirmImport by remember { mutableStateOf(false) }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         uri?.let {
             runCatching { context.contentResolver.openOutputStream(it)?.bufferedWriter()?.use { writer ->
                 writer.write(Stats.csv(entries, ZoneId.systemDefault()))
             } }.onSuccess { message = "Log exported. Your data has its towel." }.onFailure { message = "Export failed: ${it.localizedMessage}" }
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let {
+            runCatching { context.contentResolver.openInputStream(it)?.bufferedReader()?.use { reader -> reader.readText() }
+                ?: error("The selected file could not be read")
+            }.onSuccess { csv ->
+                vm.importCsv(csv, ZoneId.systemDefault()) { result ->
+                    message = result.fold(
+                        onSuccess = { count -> "$count entries imported. The old log has left the galaxy." },
+                        onFailure = { error -> "Import failed; your existing log is unchanged. ${error.message}" },
+                    )
+                }
+            }.onFailure { error -> message = "Import failed; your existing log is unchanged. ${error.message}" }
         }
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -419,6 +434,10 @@ private fun SettingsScreen(entries: List<LogEntry>, target: Double?, bulletin: S
             Spacer(Modifier.height(10.dp)); Button(onClick = { exportLauncher.launch("mostly-harmless-log.csv") }, enabled = entries.isNotEmpty()) {
                 Icon(Icons.Default.FileDownload, null); Spacer(Modifier.width(8.dp)); Text("EXPORT CSV")
             }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = { confirmImport = true }) {
+                Icon(Icons.Default.FileUpload, null); Spacer(Modifier.width(8.dp)); Text("IMPORT CSV")
+            }
             message?.let { Text(it, color = TowelTeal, fontSize = 12.sp) }
         } } }
         item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
@@ -427,6 +446,17 @@ private fun SettingsScreen(entries: List<LogEntry>, target: Double?, bulletin: S
         } } }
         item { Text("Mostly Harmless • Version 1.0\nBuilt for honest logging across this unfashionable end of the galaxy.", textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(), color = TowelTeal) }
     }
+    if (confirmImport) AlertDialog(
+        onDismissRequest = { confirmImport = false },
+        icon = { Icon(Icons.Default.Warning, null) },
+        title = { Text("Replace the entire ship's log?") },
+        text = { Text("Importing a CSV permanently removes every current smoking and resisted-urge entry, then replaces them with the imported entries. Export a backup first if the existing log matters.") },
+        confirmButton = { Button(onClick = {
+            confirmImport = false
+            importLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "text/plain"))
+        }) { Text("CHOOSE CSV & REPLACE") } },
+        dismissButton = { TextButton(onClick = { confirmImport = false }) { Text("KEEP CURRENT LOG") } },
+    )
 }
 
 @Composable private fun EmptyState(text: String) = Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(text, color = TowelTeal, textAlign = TextAlign.Center) }
