@@ -7,10 +7,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HumorTest {
-    @Test fun `each screen has several distinct bulletins`() {
+    @Test fun `each screen has sixty distinct standalone bulletins`() {
         HumorTopic.entries.forEach { topic ->
             val messages = Humor.allFor(topic)
-            assertTrue("$topic needs at least 50 messages", messages.size >= 50)
+            assertEquals("$topic needs exactly 60 messages", 60, messages.size)
+            assertTrue(messages.all { it.last() in ".!?" })
             assertEquals(messages.size, messages.distinct().size)
         }
     }
