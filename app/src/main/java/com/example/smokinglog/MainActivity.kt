@@ -210,16 +210,19 @@ private fun HistoryScreen(entries: List<LogEntry>, bulletin: String, vm: MainVie
             FilterChip(filter == EntryType.RESISTED, { filter = EntryType.RESISTED }, label = { Text("Resisted") })
         }
         val shown = entries.filter { filter == null || it.type == filter }
+        val intervals = intervalsSincePrevious(entries)
         if (shown.isEmpty()) EmptyState("The log is emptier than this bit of space.") else
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
-                items(shown, key = { it.id }) { entry -> EntryCard(entry, { editing = entry }, { vm.delete(entry) }) }
+                items(shown, key = { it.id }) { entry ->
+                    EntryCard(entry, intervals[entry.id], { editing = entry }, { vm.delete(entry) })
+                }
             }
     }
     editing?.let { entry -> EditDialog(entry, { editing = null }) { vm.update(it); editing = null } }
 }
 
 @Composable
-private fun EntryCard(entry: LogEntry, onEdit: () -> Unit, onDelete: () -> Unit) {
+private fun EntryCard(entry: LogEntry, intervalSincePrevious: Long?, onEdit: () -> Unit, onDelete: () -> Unit) {
     val dateTime = Instant.ofEpochMilli(entry.timestamp).atZone(ZoneId.systemDefault())
     Card(Modifier.fillMaxWidth()) { Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(if (entry.type == EntryType.SMOKED) Icons.Default.SmokingRooms else Icons.Default.AutoAwesome, null,
@@ -227,6 +230,11 @@ private fun EntryCard(entry: LogEntry, onEdit: () -> Unit, onDelete: () -> Unit)
         Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) {
             Text(if (entry.type == EntryType.SMOKED) "${formatAmount(entry.amount)} cigarette" else "Urge resisted", fontWeight = FontWeight.Bold)
             Text(dateTime.format(DateTimeFormatter.ofPattern("EEE, d MMM • HH:mm")), fontSize = 12.sp, color = TowelTeal)
+            Text(
+                intervalSincePrevious?.let { "↳ ${formatInterval(it)} since previous entry" } ?: "First entry in the log",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            )
             AnimatedVisibility(entry.note.isNotBlank()) { Text(entry.note, fontSize = 13.sp) }
             entry.urgeStrength?.let { Text("Urge strength: $it/5", fontSize = 12.sp) }
         }
