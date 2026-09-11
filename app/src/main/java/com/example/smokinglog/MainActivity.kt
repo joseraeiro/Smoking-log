@@ -239,15 +239,44 @@ private fun EntryCard(entry: LogEntry, onEdit: () -> Unit, onDelete: () -> Unit)
 private fun EditDialog(entry: LogEntry, onDismiss: () -> Unit, onSave: (LogEntry) -> Unit) {
     var note by remember { mutableStateOf(entry.note) }
     var amount by remember { mutableStateOf(entry.amount) }
+    val zone = ZoneId.systemDefault()
+    val recordedAt = remember(entry.timestamp, zone) {
+        Instant.ofEpochMilli(entry.timestamp).atZone(zone)
+    }
+    val timeState = rememberTimePickerState(
+        initialHour = recordedAt.hour,
+        initialMinute = recordedAt.minute,
+        is24Hour = true,
+    )
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Correct the log") }, text = { Column {
         if (entry.type == EntryType.SMOKED) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(amount == 1.0, { amount = 1.0 }, label = { Text("Whole") })
             FilterChip(amount == 0.5, { amount = 0.5 }, label = { Text("Half") })
         }
         OutlinedTextField(note, { note = it }, label = { Text("Optional note") }, modifier = Modifier.fillMaxWidth())
-        Text("Recorded time is preserved.", fontSize = 12.sp, color = TowelTeal)
-    } }, confirmButton = { Button(onClick = { onSave(entry.copy(note = note.trim(), amount = amount)) }) { Text("SAVE") } },
+        Spacer(Modifier.height(12.dp))
+        Text("Recorded time", fontWeight = FontWeight.Bold)
+        TimeInput(state = timeState, modifier = Modifier.align(Alignment.CenterHorizontally))
+        Text("The date stays ${recordedAt.toLocalDate()}; only the hour and minute change.", fontSize = 12.sp, color = TowelTeal)
+    } }, confirmButton = { Button(onClick = {
+        onSave(entry.copy(
+            timestamp = withEditedTime(entry.timestamp, timeState.hour, timeState.minute, zone),
+            note = note.trim(),
+            amount = amount,
+        ))
+    }) { Text("SAVE") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("CANCEL") } })
+}
+
+internal fun withEditedTime(timestamp: Long, hour: Int, minute: Int, zone: ZoneId): Long {
+    require(hour in 0..23) { "Hour must be between 0 and 23" }
+    require(minute in 0..59) { "Minute must be between 0 and 59" }
+    return Instant.ofEpochMilli(timestamp)
+        .atZone(zone)
+        .withHour(hour)
+        .withMinute(minute)
+        .toInstant()
+        .toEpochMilli()
 }
 
 @Composable

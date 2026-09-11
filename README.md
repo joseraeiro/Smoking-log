@@ -6,7 +6,7 @@ An offline-first Android smoking log with a cheerfully cosmic point of view. It 
 
 - One-tap whole- and half-cigarette logging with undo
 - Separate resisted-urge entries with an optional note and urge strength
-- Editable, filterable history
+- Editable, filterable history, including each entry's recorded hour and minute
 - Today, seven-day, thirty-day, and custom-range totals
 - Dashboard switcher for cigarette equivalents or individual smoking events
 - 60 standalone rotating cosmic bulletins for every main screen
