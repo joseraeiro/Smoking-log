@@ -41,6 +41,26 @@ class StatsTest {
         assertTrue(totals.all { it.smokingEvents == 0 })
     }
 
+    @Test fun `daily totals respect the personal day boundary`() {
+        val boundary = LocalTime.of(4, 0)
+        val entries = listOf(
+            LogEntry(timestamp = Instant.parse("2026-09-09T23:00:00Z").toEpochMilli(), type = EntryType.SMOKED, amount = 1.0),
+            LogEntry(timestamp = Instant.parse("2026-09-10T02:00:00Z").toEpochMilli(), type = EntryType.SMOKED, amount = .5),
+            LogEntry(timestamp = Instant.parse("2026-09-10T04:00:00Z").toEpochMilli(), type = EntryType.SMOKED, amount = 1.0),
+        )
+
+        val totals = Stats.rangeTotals(
+            entries,
+            LocalDate.parse("2026-09-09"),
+            LocalDate.parse("2026-09-10"),
+            zone,
+            boundary,
+        )
+
+        assertEquals(1.5, totals[0].amount, 0.0)
+        assertEquals(1.0, totals[1].amount, 0.0)
+    }
+
     @Test fun `csv escapes notes and keeps half amounts`() {
         val csv = Stats.csv(listOf(LogEntry(timestamp = now.toEpochMilli(), type = EntryType.SMOKED,
             amount = .5, note = "Tense, then \"fine\"")), zone)

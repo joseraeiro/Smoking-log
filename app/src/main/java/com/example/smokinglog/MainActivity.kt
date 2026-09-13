@@ -34,6 +34,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.smokinglog.data.*
 import java.time.*
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
 
@@ -74,6 +75,7 @@ private enum class InsightMetric(val label: String) {
 private fun SmokingLogApp(vm: MainViewModel = viewModel()) {
     val entries by vm.entries.collectAsState()
     val target by vm.dailyTarget.collectAsState()
+    val dayBoundary by vm.dayBoundary.collectAsState()
     var screen by remember { mutableStateOf(Screen.TODAY) }
     var bulletin by remember { mutableStateOf(Humor.next(HumorTopic.TODAY)) }
     Scaffold(
@@ -98,20 +100,32 @@ private fun SmokingLogApp(vm: MainViewModel = viewModel()) {
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (screen) {
-                Screen.TODAY -> TodayScreen(entries, target, bulletin, vm)
+                Screen.TODAY -> TodayScreen(entries, target, dayBoundary, bulletin, vm)
                 Screen.HISTORY -> HistoryScreen(entries, bulletin, vm)
-                Screen.INSIGHTS -> InsightsScreen(entries, bulletin)
-                Screen.SETTINGS -> SettingsScreen(entries, target, bulletin, vm)
+                Screen.INSIGHTS -> InsightsScreen(entries, dayBoundary, bulletin)
+                Screen.SETTINGS -> SettingsScreen(entries, target, dayBoundary, bulletin, vm)
             }
         }
     }
 }
 
 @Composable
-private fun TodayScreen(entries: List<LogEntry>, target: Double?, bulletin: String, vm: MainViewModel) {
+private fun TodayScreen(
+    entries: List<LogEntry>,
+    target: Double?,
+    dayBoundary: LocalTime,
+    bulletin: String,
+    vm: MainViewModel,
+) {
     val zone = ZoneId.systemDefault()
-    val today = LocalDate.now(zone)
-    val todayEntries = entries.filter { Instant.ofEpochMilli(it.timestamp).atZone(zone).toLocalDate() == today }
+    val now by produceState(initialValue = Instant.now()) {
+        while (true) {
+            delay(60_000)
+            value = Instant.now()
+        }
+    }
+    val today = TrackingDay.currentDate(now, zone, dayBoundary)
+    val todayEntries = entries.filter { TrackingDay.dateFor(it.timestamp, zone, dayBoundary) == today }
     val smoked = todayEntries.filter { it.type == EntryType.SMOKED }
     val amount = smoked.sumOf { it.amount }
     val resisted = todayEntries.count { it.type == EntryType.RESISTED }
@@ -126,7 +140,14 @@ private fun TodayScreen(entries: List<LogEntry>, target: Double?, bulletin: Stri
     }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            item { Text("Your pocket guide to today", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+            item { Column {
+                Text("Your pocket guide to today", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "${today.format(DateTimeFormatter.ofPattern("EEEE, d MMM"))} tracking day • rolls over at ${formatBoundary(dayBoundary)}",
+                    color = TowelTeal,
+                    fontSize = 12.sp,
+                )
+            } }
             item { CosmicBulletin(bulletin) }
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = GuideBlue), modifier = Modifier.fillMaxWidth()) {
@@ -288,15 +309,15 @@ internal fun withEditedTime(timestamp: Long, hour: Int, minute: Int, zone: ZoneI
 }
 
 @Composable
-private fun InsightsScreen(entries: List<LogEntry>, bulletin: String) {
+private fun InsightsScreen(entries: List<LogEntry>, dayBoundary: LocalTime, bulletin: String) {
     val zone = ZoneId.systemDefault()
     var presetDays by remember { mutableStateOf<Int?>(7) }
     var customRange by remember { mutableStateOf<Pair<LocalDate, LocalDate>?>(null) }
     var showRangePicker by remember { mutableStateOf(false) }
     var metric by remember { mutableStateOf(InsightMetric.EQUIVALENTS) }
     var metricMenuOpen by remember { mutableStateOf(false) }
-    val totals = presetDays?.let { Stats.dayTotals(entries, it, Instant.now(), zone) }
-        ?: customRange?.let { Stats.rangeTotals(entries, it.first, it.second, zone) }.orEmpty()
+    val totals = presetDays?.let { Stats.dayTotals(entries, it, Instant.now(), zone, dayBoundary) }
+        ?: customRange?.let { Stats.rangeTotals(entries, it.first, it.second, zone, dayBoundary) }.orEmpty()
     val metricTotal = when (metric) {
         InsightMetric.EQUIVALENTS -> totals.sumOf { it.amount }
         InsightMetric.EVENTS -> totals.sumOf { it.smokingEvents }.toDouble()
@@ -304,14 +325,17 @@ private fun InsightsScreen(entries: List<LogEntry>, bulletin: String) {
     val average = metricTotal / totals.size.coerceAtLeast(1)
     val visibleDates = totals.mapTo(mutableSetOf()) { it.date }
     val visibleEntries = entries.filter { entry ->
-        Instant.ofEpochMilli(entry.timestamp).atZone(zone).toLocalDate() in visibleDates
+        TrackingDay.dateFor(entry.timestamp, zone, dayBoundary) in visibleDates
     }
     val longest = longestGap(visibleEntries)
     val highest = totals.maxByOrNull {
         if (metric == InsightMetric.EQUIVALENTS) it.amount else it.smokingEvents.toDouble()
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { Text("The Guide", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+        item { Column {
+            Text("The Guide", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Daily figures roll over at ${formatBoundary(dayBoundary)}", color = TowelTeal, fontSize = 12.sp)
+        } }
         item { CosmicBulletin(bulletin) }
         item {
             Box {
@@ -428,11 +452,18 @@ private fun CustomRangeDialog(
 }
 
 @Composable
-private fun SettingsScreen(entries: List<LogEntry>, target: Double?, bulletin: String, vm: MainViewModel) {
+private fun SettingsScreen(
+    entries: List<LogEntry>,
+    target: Double?,
+    dayBoundary: LocalTime,
+    bulletin: String,
+    vm: MainViewModel,
+) {
     val context = LocalContext.current
     var targetText by remember(target) { mutableStateOf(target?.let(::formatAmount) ?: "") }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmImport by remember { mutableStateOf(false) }
+    var showBoundaryPicker by remember { mutableStateOf(false) }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         uri?.let {
             runCatching { context.contentResolver.openOutputStream(it)?.bufferedWriter()?.use { writer ->
@@ -466,6 +497,17 @@ private fun SettingsScreen(entries: List<LogEntry>, target: Double?, bulletin: S
                 TextButton(onClick = { targetText = ""; vm.setTarget(null) }) { Text("CLEAR") } }
         } } }
         item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+            Text("MY DAY ROLLS OVER AT", color = TowelTeal, fontWeight = FontWeight.Bold)
+            Text("After-midnight entries before this time count toward the previous tracking day.", fontSize = 13.sp)
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = { showBoundaryPicker = true }) {
+                Icon(Icons.Default.Schedule, null)
+                Spacer(Modifier.width(8.dp))
+                Text(formatBoundary(dayBoundary))
+            }
+            Text("This regroups daily figures without changing any recorded date or time.", fontSize = 12.sp, color = TowelTeal)
+        } } }
+        item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
             Text("YOUR DATA", color = TowelTeal, fontWeight = FontWeight.Bold)
             Text("Stored locally on this device. Export a portable copy whenever you like.")
             Spacer(Modifier.height(10.dp)); Button(onClick = { exportLauncher.launch("mostly-harmless-log.csv") }, enabled = entries.isNotEmpty()) {
@@ -494,6 +536,38 @@ private fun SettingsScreen(entries: List<LogEntry>, target: Double?, bulletin: S
         }) { Text("CHOOSE CSV & REPLACE") } },
         dismissButton = { TextButton(onClick = { confirmImport = false }) { Text("KEEP CURRENT LOG") } },
     )
+    if (showBoundaryPicker) DayBoundaryDialog(
+        initialTime = dayBoundary,
+        onDismiss = { showBoundaryPicker = false },
+        onConfirm = { selected ->
+            vm.setDayBoundary(selected)
+            showBoundaryPicker = false
+        },
+    )
+}
+
+@Composable
+private fun DayBoundaryDialog(
+    initialTime: LocalTime,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalTime) -> Unit,
+) {
+    val state = rememberTimePickerState(
+        initialHour = initialTime.hour,
+        initialMinute = initialTime.minute,
+        is24Hour = true,
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("When does your day roll over?") },
+        text = { Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Entries after midnight but before this time stay with the previous tracking day.")
+            Spacer(Modifier.height(12.dp))
+            TimeInput(state = state)
+        } },
+        confirmButton = { Button(onClick = { onConfirm(LocalTime.of(state.hour, state.minute)) }) { Text("USE TIME") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("CANCEL") } },
+    )
 }
 
 @Composable private fun EmptyState(text: String) = Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(text, color = TowelTeal, textAlign = TextAlign.Center) }
@@ -511,6 +585,7 @@ private fun SettingsScreen(entries: List<LogEntry>, target: Double?, bulletin: S
     }
 }
 private fun formatAmount(value: Double) = if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(value)
+private fun formatBoundary(value: LocalTime) = value.format(DateTimeFormatter.ofPattern("HH:mm"))
 private fun longestGap(entries: List<LogEntry>): String? {
     val times = entries.filter { it.type == EntryType.SMOKED }.map { it.timestamp }.sorted()
     val minutes = times.zipWithNext { a, b -> (b - a) / 60_000 }.maxOrNull() ?: return null
