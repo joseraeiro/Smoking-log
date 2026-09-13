@@ -1,0 +1,857 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
+package com.example.smokinglog
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.smokinglog.data.*
+import java.time.*
+import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.max
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent { GuideTheme { SmokingLogApp() } }
+    }
+}
+
+private val Space = Color(0xFF071A2B)
+private val GuideBlue = Color(0xFF0A3454)
+private val TowelTeal = Color(0xFF57DFC2)
+private val FriendlyYellow = Color(0xFFFFE066)
+private val triggerOptions = listOf("", "Coffee", "After eating", "Alcohol", "Work break", "Driving", "Social", "Stress", "Anxiety", "Boredom", "Autopilot", "Waking up", "Before sleep", "Other")
+private val copingOptions = listOf("", "Waited", "Drank water", "Walked", "Ate something", "Breathing exercise", "Changed location", "Kept busy", "Talked to someone", "Nicotine replacement", "Remembered my reason", "Other")
+private val feelingOptions = listOf("", "Proud", "Calmer", "Relieved", "Still restless", "Irritable", "Neutral", "Other")
+
+private data class ResistDetails(
+    val note: String,
+    val strength: Int?,
+    val trigger: String,
+    val copingStrategy: String,
+    val durationMinutes: Int?,
+    val feelingAfter: String,
+)
+
+@Composable
+private fun GuideTheme(content: @Composable () -> Unit) {
+    val colors = darkColorScheme(
+        primary = FriendlyYellow, onPrimary = Space, secondary = TowelTeal,
+        background = Space, surface = GuideBlue, onBackground = Color(0xFFF4F6EF),
+        onSurface = Color(0xFFF4F6EF), error = Color(0xFFFF8A80)
+    )
+    MaterialTheme(colorScheme = colors, typography = Typography(), content = content)
+}
+
+private enum class Screen(val label: String, val icon: ImageVector, val topic: HumorTopic) {
+    TODAY("Today", Icons.Default.RocketLaunch, HumorTopic.TODAY),
+    HISTORY("Log", Icons.AutoMirrored.Filled.MenuBook, HumorTopic.HISTORY),
+    INSIGHTS("Guide", Icons.Default.QueryStats, HumorTopic.INSIGHTS),
+    SETTINGS("Settings", Icons.Default.Settings, HumorTopic.SETTINGS)
+}
+
+private enum class InsightMetric(val label: String) {
+    EQUIVALENTS("Cigarette equivalents"), EVENTS("Smoking events")
+}
+private enum class GuideSection(val label: String) { OVERVIEW("Overview"), TIMING("Timing"), TRIGGERS("Triggers"), COPING("Coping"), COSTS("Costs") }
+
+@Composable
+private fun SmokingLogApp(vm: MainViewModel = viewModel()) {
+    val entries by vm.entries.collectAsState()
+    val target by vm.dailyTarget.collectAsState()
+    val dayBoundary by vm.dayBoundary.collectAsState()
+    val packPrice by vm.packPrice.collectAsState()
+    val packSize by vm.packSize.collectAsState()
+    val currency by vm.currency.collectAsState()
+    var screen by remember { mutableStateOf(Screen.TODAY) }
+    var bulletin by remember { mutableStateOf(Humor.next(HumorTopic.TODAY)) }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Column { Text("DON'T PANIC", fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+                    Text("A mostly harmless smoking log", fontSize = 12.sp, color = TowelTeal) } },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Space)
+            )
+        },
+        bottomBar = {
+            NavigationBar(containerColor = GuideBlue) {
+                Screen.entries.forEach { item -> NavigationBarItem(
+                    selected = screen == item, onClick = {
+                        screen = item
+                        bulletin = Humor.next(item.topic, bulletin)
+                    },
+                    icon = { Icon(item.icon, null) }, label = { Text(item.label) }
+                ) }
+            }
+        }
+    ) { padding ->
+        Box(Modifier.padding(padding).fillMaxSize()) {
+            when (screen) {
+                Screen.TODAY -> TodayScreen(entries, target, dayBoundary, bulletin, vm)
+                Screen.HISTORY -> HistoryScreen(entries, bulletin, vm)
+                Screen.INSIGHTS -> InsightsScreen(entries, dayBoundary, packPrice, packSize, currency, bulletin)
+                Screen.SETTINGS -> SettingsScreen(entries, target, dayBoundary, packPrice, packSize, currency, bulletin, vm)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodayScreen(
+    entries: List<LogEntry>,
+    target: Double?,
+    dayBoundary: LocalTime,
+    bulletin: String,
+    vm: MainViewModel,
+) {
+    val zone = ZoneId.systemDefault()
+    val now by produceState(initialValue = Instant.now()) {
+        while (true) {
+            delay(60_000)
+            value = Instant.now()
+        }
+    }
+    val today = TrackingDay.currentDate(now, zone, dayBoundary)
+    val todayEntries = entries.filter { TrackingDay.dateFor(it.timestamp, zone, dayBoundary) == today }
+    val smoked = todayEntries.filter { it.type == EntryType.SMOKED }
+    val amount = smoked.sumOf { it.amount }
+    val resisted = todayEntries.count { it.type == EntryType.RESISTED }
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    var resistDialog by remember { mutableStateOf(false) }
+    var selectedTrigger by remember { mutableStateOf("") }
+    fun log(value: Double) = vm.log(value, selectedTrigger) { entry ->
+        selectedTrigger = ""
+        scope.launch {
+            if (snackbar.showSnackbar(Humor.smoked(value),
+                    "UNDO", duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed) vm.delete(entry)
+        }
+    }
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            item { Column {
+                Text("Your pocket guide to today", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "${today.format(DateTimeFormatter.ofPattern("EEEE, d MMM"))} tracking day • rolls over at ${formatBoundary(dayBoundary)}",
+                    color = TowelTeal,
+                    fontSize = 12.sp,
+                )
+            } }
+            item { CosmicBulletin(bulletin) }
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = GuideBlue), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(20.dp)) {
+                        Text("CIGARETTE EQUIVALENTS", color = TowelTeal, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(formatAmount(amount), fontSize = 52.sp, fontWeight = FontWeight.Black, color = FriendlyYellow)
+                        Text("${smoked.size} smoking events  •  $resisted urges resisted")
+                        if (target != null) {
+                            Spacer(Modifier.height(12.dp))
+                            LinearProgressIndicator(progress = { (amount / target).toFloat().coerceIn(0f, 1f) }, Modifier.fillMaxWidth())
+                            Text(if (amount <= target) "${formatAmount(target - amount)} left before today's target"
+                            else "Above target. Keep logging honestly — no Vogon poetry required.", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+            item { LastCigarette(smoked.firstOrNull()) }
+            todayEntries.firstOrNull { it.type == EntryType.RESISTED && it.copingStrategy.isNotBlank() }?.let { recent ->
+                item { MetricRow("Recent coping strategy", recent.copingStrategy) }
+            }
+            item {
+                ChoiceDropdown(
+                    label = "Optional trigger for next cigarette",
+                    value = selectedTrigger,
+                    options = triggerOptions,
+                    onSelected = { selectedTrigger = it },
+                )
+            }
+            item {
+                Button(onClick = { log(1.0) }, Modifier.fillMaxWidth().height(68.dp), shape = RoundedCornerShape(18.dp)) {
+                    Icon(Icons.Default.AddCircle, null); Spacer(Modifier.width(10.dp)); Text("LOG A WHOLE CIGARETTE", fontWeight = FontWeight.Black)
+                }
+            }
+            item {
+                OutlinedButton(onClick = { log(0.5) }, Modifier.fillMaxWidth().height(60.dp), shape = RoundedCornerShape(18.dp)) {
+                    Icon(Icons.Default.ExposurePlus1, null); Spacer(Modifier.width(10.dp)); Text("LOG HALF A CIGARETTE", fontWeight = FontWeight.Bold)
+                }
+            }
+            item { HorizontalDivider() }
+            item {
+                FilledTonalButton(onClick = { resistDialog = true }, Modifier.fillMaxWidth().height(56.dp)) {
+                    Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(8.dp)); Text("I RESISTED AN URGE")
+                }
+            }
+            item { Text("Record first, reflect optionally. Accurate data is useful data, even on improbable days.", color = TowelTeal, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
+        }
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(12.dp))
+    }
+    if (resistDialog) ResistDialog(onDismiss = { resistDialog = false }) { details ->
+        vm.resist(details.note, details.strength, details.trigger, details.copingStrategy,
+            details.durationMinutes, details.feelingAfter)
+        resistDialog = false
+        scope.launch { snackbar.showSnackbar(Humor.resisted()) }
+    }
+}
+
+@Composable
+private fun LastCigarette(entry: LogEntry?) {
+    val text = if (entry == null) "No cigarette logged yet today. A splendidly uneventful entry."
+    else {
+        val minutes = Duration.between(Instant.ofEpochMilli(entry.timestamp), Instant.now()).toMinutes().coerceAtLeast(0)
+        "Last cigarette ${if (minutes < 60) "$minutes min" else "${minutes / 60}h ${minutes % 60}m"} ago"
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Schedule, null, tint = TowelTeal); Spacer(Modifier.width(8.dp)); Text(text) }
+}
+
+@Composable
+private fun ResistDialog(onDismiss: () -> Unit, onSave: (ResistDetails) -> Unit) {
+    var note by remember { mutableStateOf("") }
+    var strength by remember { mutableStateOf<Int?>(null) }
+    var trigger by remember { mutableStateOf("") }
+    var coping by remember { mutableStateOf("") }
+    var duration by remember { mutableStateOf("") }
+    var feeling by remember { mutableStateOf("") }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("A small but excellent victory") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("How did you feel, and what helped? This is optional — the universe will continue either way.")
+            ChoiceDropdown("Trigger (optional)", trigger, triggerOptions) { trigger = it }
+            Text("Urge strength (optional)")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                (1..5).forEach { value -> FilterChip(selected = strength == value, onClick = { strength = if (strength == value) null else value }, label = { Text("$value") }) }
+            }
+            ChoiceDropdown("What helped? (optional)", coping, copingOptions) { coping = it }
+            OutlinedTextField(duration, { duration = it.filter(Char::isDigit).take(4) }, Modifier.fillMaxWidth(), label = { Text("Duration in minutes (optional)") }, singleLine = true)
+            ChoiceDropdown("How did you feel afterward?", feeling, feelingOptions) { feeling = it }
+            OutlinedTextField(note, { note = it }, Modifier.fillMaxWidth(), label = { Text("Optional note") }, minLines = 2)
+        } },
+        confirmButton = { Button(onClick = { onSave(ResistDetails(note, strength, trigger, coping, duration.toIntOrNull(), feeling)) }) { Text("RECORD THE WIN") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("CANCEL") } })
+}
+
+@Composable
+private fun ChoiceDropdown(label: String, value: String, options: List<String>, onSelected: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (value.isBlank()) label else "$label: $value", Modifier.weight(1f), textAlign = TextAlign.Start)
+            Icon(Icons.Default.ArrowDropDown, null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option -> DropdownMenuItem(
+                text = { Text(option.ifBlank { "None" }) },
+                onClick = { onSelected(option); expanded = false },
+            ) }
+        }
+    }
+}
+
+@Composable
+private fun HistoryScreen(entries: List<LogEntry>, bulletin: String, vm: MainViewModel) {
+    var filter by remember { mutableStateOf<EntryType?>(null) }
+    var editing by remember { mutableStateOf<LogEntry?>(null) }
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Text("The ship's log", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        CosmicBulletin(bulletin)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(filter == null, { filter = null }, label = { Text("All") })
+            FilterChip(filter == EntryType.SMOKED, { filter = EntryType.SMOKED }, label = { Text("Smoked") })
+            FilterChip(filter == EntryType.RESISTED, { filter = EntryType.RESISTED }, label = { Text("Resisted") })
+        }
+        val shown = entries.filter { filter == null || it.type == filter }
+        val intervals = intervalsSincePrevious(entries)
+        if (shown.isEmpty()) EmptyState("The log is emptier than this bit of space.") else
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
+                items(shown, key = { it.id }) { entry ->
+                    EntryCard(entry, intervals[entry.id], { editing = entry }, { vm.delete(entry) })
+                }
+            }
+    }
+    editing?.let { entry -> EditDialog(entry, { editing = null }) { vm.update(it); editing = null } }
+}
+
+@Composable
+private fun EntryCard(entry: LogEntry, intervalSincePrevious: Long?, onEdit: () -> Unit, onDelete: () -> Unit) {
+    val dateTime = Instant.ofEpochMilli(entry.timestamp).atZone(ZoneId.systemDefault())
+    Card(Modifier.fillMaxWidth()) { Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(if (entry.type == EntryType.SMOKED) Icons.Default.SmokingRooms else Icons.Default.AutoAwesome, null,
+            tint = if (entry.type == EntryType.SMOKED) FriendlyYellow else TowelTeal)
+        Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) {
+            Text(if (entry.type == EntryType.SMOKED) "${formatAmount(entry.amount)} cigarette" else "Urge resisted", fontWeight = FontWeight.Bold)
+            Text(dateTime.format(DateTimeFormatter.ofPattern("EEE, d MMM • HH:mm")), fontSize = 12.sp, color = TowelTeal)
+            Text(
+                intervalSincePrevious?.let { "↳ ${formatInterval(it)} since previous entry" } ?: "First entry in the log",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            )
+            if (entry.trigger.isNotBlank()) Text("Trigger: ${entry.trigger}", fontSize = 12.sp)
+            if (entry.copingStrategy.isNotBlank()) Text("Helped: ${entry.copingStrategy}", fontSize = 12.sp)
+            entry.urgeDurationMinutes?.let { Text("Urge lasted: ${it}m", fontSize = 12.sp) }
+            if (entry.feelingAfter.isNotBlank()) Text("Afterward: ${entry.feelingAfter}", fontSize = 12.sp)
+            AnimatedVisibility(entry.note.isNotBlank()) { Text(entry.note, fontSize = 13.sp) }
+            entry.urgeStrength?.let { Text("Urge strength: $it/5", fontSize = 12.sp) }
+        }
+        IconButton(onEdit) { Icon(Icons.Default.Edit, "Edit") }
+        IconButton(onDelete) { Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error) }
+    } }
+}
+
+@Composable
+private fun EditDialog(entry: LogEntry, onDismiss: () -> Unit, onSave: (LogEntry) -> Unit) {
+    var note by remember { mutableStateOf(entry.note) }
+    var amount by remember { mutableStateOf(entry.amount) }
+    var trigger by remember { mutableStateOf(entry.trigger) }
+    var coping by remember { mutableStateOf(entry.copingStrategy) }
+    var duration by remember { mutableStateOf(entry.urgeDurationMinutes?.toString().orEmpty()) }
+    var feeling by remember { mutableStateOf(entry.feelingAfter) }
+    var strength by remember { mutableStateOf(entry.urgeStrength) }
+    val zone = ZoneId.systemDefault()
+    val recordedAt = remember(entry.timestamp, zone) {
+        Instant.ofEpochMilli(entry.timestamp).atZone(zone)
+    }
+    val timeState = rememberTimePickerState(
+        initialHour = recordedAt.hour,
+        initialMinute = recordedAt.minute,
+        is24Hour = true,
+    )
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Correct the log") }, text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+        if (entry.type == EntryType.SMOKED) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(amount == 1.0, { amount = 1.0 }, label = { Text("Whole") })
+            FilterChip(amount == 0.5, { amount = 0.5 }, label = { Text("Half") })
+        }
+        ChoiceDropdown("Trigger (optional)", trigger, triggerOptions) { trigger = it }
+        if (entry.type == EntryType.RESISTED) {
+            Text("Urge strength (optional)")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                (1..5).forEach { value -> FilterChip(strength == value, { strength = if (strength == value) null else value }, label = { Text("$value") }) }
+            }
+            ChoiceDropdown("What helped? (optional)", coping, copingOptions) { coping = it }
+            OutlinedTextField(duration, { duration = it.filter(Char::isDigit).take(4) }, label = { Text("Urge duration in minutes") }, modifier = Modifier.fillMaxWidth())
+            ChoiceDropdown("How did you feel afterward?", feeling, feelingOptions) { feeling = it }
+        }
+        OutlinedTextField(note, { note = it }, label = { Text("Optional note") }, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(12.dp))
+        Text("Recorded time", fontWeight = FontWeight.Bold)
+        TimeInput(state = timeState, modifier = Modifier.align(Alignment.CenterHorizontally))
+        Text("The date stays ${recordedAt.toLocalDate()}; only the hour and minute change.", fontSize = 12.sp, color = TowelTeal)
+    } }, confirmButton = { Button(onClick = {
+        onSave(entry.copy(
+            timestamp = withEditedTime(entry.timestamp, timeState.hour, timeState.minute, zone),
+            note = note.trim(),
+            amount = amount,
+            trigger = trigger,
+            copingStrategy = coping,
+            urgeDurationMinutes = duration.toIntOrNull(),
+            feelingAfter = feeling,
+            urgeStrength = strength,
+        ))
+    }) { Text("SAVE") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("CANCEL") } })
+}
+
+internal fun withEditedTime(timestamp: Long, hour: Int, minute: Int, zone: ZoneId): Long {
+    require(hour in 0..23) { "Hour must be between 0 and 23" }
+    require(minute in 0..59) { "Minute must be between 0 and 59" }
+    return Instant.ofEpochMilli(timestamp)
+        .atZone(zone)
+        .withHour(hour)
+        .withMinute(minute)
+        .toInstant()
+        .toEpochMilli()
+}
+
+@Composable
+private fun InsightsScreen(
+    entries: List<LogEntry>,
+    dayBoundary: LocalTime,
+    packPrice: Double?,
+    packSize: Int,
+    currency: String,
+    bulletin: String,
+) {
+    val zone = ZoneId.systemDefault()
+    var presetDays by remember { mutableStateOf<Int?>(7) }
+    var customRange by remember { mutableStateOf<Pair<LocalDate, LocalDate>?>(null) }
+    var showRangePicker by remember { mutableStateOf(false) }
+    var metric by remember { mutableStateOf(InsightMetric.EQUIVALENTS) }
+    var metricMenuOpen by remember { mutableStateOf(false) }
+    var section by remember { mutableStateOf(GuideSection.OVERVIEW) }
+    var overviewCards by remember { mutableStateOf(setOf("Consumption", "Resisted", "Average interval", "Cost")) }
+    val today = TrackingDay.currentDate(Instant.now(), zone, dayBoundary)
+    val range = customRange ?: run {
+        val days = presetDays ?: 7
+        today.minusDays(days.toLong() - 1) to today
+    }
+    val totals = Stats.rangeTotals(entries, range.first, range.second, zone, dayBoundary)
+    val visibleEntries = Analytics.entriesInRange(entries, range.first, range.second, zone, dayBoundary)
+    val numberOfDays = totals.size.coerceAtLeast(1)
+    val previousEnd = range.first.minusDays(1)
+    val previousStart = previousEnd.minusDays(numberOfDays.toLong() - 1)
+    val previousEntries = Analytics.entriesInRange(entries, previousStart, previousEnd, zone, dayBoundary)
+    val intervalSummary = Analytics.intervals(visibleEntries)
+    val currentValue = if (metric == InsightMetric.EQUIVALENTS) visibleEntries.filter { it.type == EntryType.SMOKED }.sumOf { it.amount }
+        else visibleEntries.count { it.type == EntryType.SMOKED }.toDouble()
+    val previousValue = if (metric == InsightMetric.EQUIVALENTS) previousEntries.filter { it.type == EntryType.SMOKED }.sumOf { it.amount }
+        else previousEntries.count { it.type == EntryType.SMOKED }.toDouble()
+    val change = currentValue - previousValue
+
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item { Column {
+            Text("The Guide", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Daily figures roll over at ${formatBoundary(dayBoundary)}", color = TowelTeal, fontSize = 12.sp)
+        } }
+        item { CosmicBulletin(bulletin) }
+        item { ScrollableTabRow(selectedTabIndex = section.ordinal, edgePadding = 0.dp) {
+            GuideSection.entries.forEach { item -> Tab(selected = section == item, onClick = { section = item }, text = { Text(item.label) }) }
+        } }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(7, 30).forEach { days -> FilterChip(presetDays == days, {
+                    presetDays = days; customRange = null
+                }, label = { Text("$days days") }) }
+                FilterChip(presetDays == null, { showRangePicker = true }, label = { Text("Custom") },
+                    leadingIcon = { Icon(Icons.Default.DateRange, null, Modifier.size(18.dp)) })
+            }
+        }
+        item { Text(
+            "${range.first.format(DateTimeFormatter.ofPattern("d MMM yyyy"))} — ${range.second.format(DateTimeFormatter.ofPattern("d MMM yyyy"))} • $numberOfDays tracking days",
+            color = TowelTeal, fontSize = 12.sp,
+        ) }
+        when (section) {
+            GuideSection.OVERVIEW -> overviewItems(
+                totals, visibleEntries, metric, currentValue, previousValue, change, intervalSummary,
+                packPrice, packSize, currency, overviewCards,
+                toggleCard = { card -> overviewCards = if (card in overviewCards) overviewCards - card else overviewCards + card },
+                showMetricMenu = { metricMenuOpen = it },
+            )
+            GuideSection.TIMING -> timingItems(visibleEntries, previousEntries, zone, dayBoundary, intervalSummary)
+            GuideSection.TRIGGERS -> triggerItems(visibleEntries)
+            GuideSection.COPING -> copingItems(visibleEntries)
+            GuideSection.COSTS -> costItems(visibleEntries, packPrice, packSize, currency)
+        }
+    }
+    if (metricMenuOpen) AlertDialog(
+        onDismissRequest = { metricMenuOpen = false },
+        title = { Text("Dashboard metric") },
+        text = { Column { InsightMetric.entries.forEach { option -> TextButton(onClick = { metric = option; metricMenuOpen = false }) { Text(option.label) } } } },
+        confirmButton = {},
+    )
+    if (showRangePicker) CustomRangeDialog(
+        initialRange = customRange,
+        onDismiss = { showRangePicker = false },
+        onConfirm = { start, end -> customRange = start to end; presetDays = null; showRangePicker = false }
+    )
+}
+
+private fun LazyListScope.overviewItems(
+    totals: List<DayTotal>, entries: List<LogEntry>, metric: InsightMetric, current: Double, previous: Double,
+    change: Double, intervals: IntervalSummary?, packPrice: Double?, packSize: Int, currency: String,
+    visibleCards: Set<String>, toggleCard: (String) -> Unit,
+    showMetricMenu: (Boolean) -> Unit,
+) {
+    item { OutlinedButton(onClick = { showMetricMenu(true) }, Modifier.fillMaxWidth()) {
+        Icon(Icons.Default.SwapVert, null); Spacer(Modifier.width(8.dp)); Text("Showing: ${metric.label}", Modifier.weight(1f), textAlign = TextAlign.Start)
+        Icon(Icons.Default.ArrowDropDown, null)
+    } }
+    item { Text("Overview cards", fontWeight = FontWeight.Bold) }
+    item { Column { listOf("Consumption", "Resisted", "Average interval", "Cost").chunked(2).forEach { row ->
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { row.forEach { card ->
+            FilterChip(card in visibleCards, { toggleCard(card) }, label = { Text(card) })
+        } }
+    } } }
+    if ("Consumption" in visibleCards) item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        MetricCard(if (metric == InsightMetric.EVENTS) "EVENTS" else "EQUIVALENTS", formatAmount(current), Modifier.weight(1f))
+        MetricCard("DAILY AVG", formatAmount(current / totals.size.coerceAtLeast(1)), Modifier.weight(1f))
+    } }
+    if ("Resisted" in visibleCards) item { MetricRow("Resisted urges", entries.count { it.type == EntryType.RESISTED }.toString()) }
+    item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+        Text("Compared with the previous ${totals.size} days", fontWeight = FontWeight.Bold)
+        Text("${signedAmount(change)} ${metric.label.lowercase()} (${comparisonPercent(current, previous)})", color = TowelTeal)
+    } } }
+    if ("Average interval" in visibleCards) item { MetricRow("Average interval", intervals?.averageMinutes?.let(::formatMinutes) ?: "—") }
+    if ("Cost" in visibleCards) Analytics.moneySpent(entries, packPrice, packSize)?.let { spent -> item { MetricRow("Money spent", "$currency${"%.2f".format(spent)}") } }
+    item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+        Text("${metric.label} by tracking day", fontWeight = FontWeight.Bold)
+        BarChart(totals, metric, Modifier.fillMaxWidth().height(180.dp))
+    } } }
+    item { CalendarHeatmap(totals, metric) }
+    val highest = totals.maxByOrNull { if (metric == InsightMetric.EQUIVALENTS) it.amount else it.smokingEvents.toDouble() }
+    item { MetricRow("Highest day", highest?.let {
+        val value = if (metric == InsightMetric.EQUIVALENTS) it.amount else it.smokingEvents.toDouble()
+        "${it.date.format(DateTimeFormatter.ofPattern("EEE d MMM"))}: ${formatAmount(value)}"
+    } ?: "—") }
+}
+
+private fun LazyListScope.timingItems(entries: List<LogEntry>, previousEntries: List<LogEntry>, zone: ZoneId, boundary: LocalTime, summary: IntervalSummary?) {
+    val hourly = Analytics.hourlySmokingEvents(entries, zone)
+    val timing = Analytics.dailyTiming(entries, zone, boundary)
+    item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        MetricCard("AVERAGE", summary?.averageMinutes?.let(::formatMinutes) ?: "—", Modifier.weight(1f))
+        MetricCard("MEDIAN", summary?.medianMinutes?.let(::formatMinutes) ?: "—", Modifier.weight(1f))
+    } }
+    item { MetricRow("Shortest interval", summary?.shortestMinutes?.let(::formatMinutes) ?: "—") }
+    item { MetricRow("Longest interval", summary?.longestMinutes?.let(::formatMinutes) ?: "—") }
+    val previousAverage = Analytics.intervals(previousEntries)?.averageMinutes
+    if (summary != null && previousAverage != null) item {
+        MetricRow("Average vs previous period", "${if (summary.averageMinutes - previousAverage >= 0) "+" else ""}${formatMinutesSigned(summary.averageMinutes - previousAverage)}")
+    }
+    item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+        Text("Interval distribution", fontWeight = FontWeight.Bold)
+        Text("Under 30m: ${summary?.under30 ?: 0}  •  30–59m: ${summary?.from30To59 ?: 0}")
+        Text("1–2h: ${summary?.from60To119 ?: 0}  •  2h+: ${summary?.atLeast120 ?: 0}")
+    } } }
+    item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+        Text("Smoking events by hour", fontWeight = FontWeight.Bold)
+        HourlyChart(hourly, Modifier.fillMaxWidth().height(170.dp))
+        Text("00      06      12      18      23", fontSize = 11.sp, color = TowelTeal, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+    } } }
+    item { MetricRow("Average first cigarette", timing.averageFirstMinute?.let(::formatClockMinute) ?: "—") }
+    item { MetricRow("Average last cigarette", timing.averageLastMinute?.let(::formatClockMinute) ?: "—") }
+    item { Text("First and last by tracking day", fontWeight = FontWeight.Bold) }
+    val rows = entries.filter { it.type == EntryType.SMOKED }.groupBy { TrackingDay.dateFor(it.timestamp, zone, boundary) }
+        .toSortedMap(reverseOrder()).entries.take(7)
+    items(rows) { (date, dayEntries) ->
+        val chronological = dayEntries.sortedBy { it.timestamp }
+        val first = Instant.ofEpochMilli(chronological.first().timestamp).atZone(zone).toLocalTime()
+        val last = Instant.ofEpochMilli(chronological.last().timestamp).atZone(zone).toLocalTime()
+        MetricRow(date.format(DateTimeFormatter.ofPattern("EEE d MMM")), "${first.format(DateTimeFormatter.ofPattern("HH:mm"))} — ${last.format(DateTimeFormatter.ofPattern("HH:mm"))}")
+    }
+}
+
+private fun LazyListScope.triggerItems(entries: List<LogEntry>) {
+    val counts = Analytics.triggerCounts(entries)
+    item { Text("Triggers recorded for ${counts.sumOf { it.second }} events", color = TowelTeal) }
+    if (counts.isEmpty()) item { EmptyGuideCard("No triggers recorded in this interval.") }
+    else items(counts) { (name, count) -> MetricRow(name, count.toString()) }
+    val intervalByTrigger = Analytics.averageIntervalByTrigger(entries)
+    if (intervalByTrigger.isNotEmpty()) {
+        item { Text("Average interval before each trigger", fontWeight = FontWeight.Bold) }
+        items(intervalByTrigger) { (name, minutes) -> MetricRow(name, formatMinutes(minutes)) }
+    }
+    item { InsightObservation(if (counts.sumOf { it.second } >= 5) "Most frequently recorded trigger: ${counts.first().first}." else "Record at least five triggers before the Guide ventures an observation.") }
+}
+
+private fun LazyListScope.copingItems(entries: List<LogEntry>) {
+    val resisted = entries.filter { it.type == EntryType.RESISTED }
+    val counts = Analytics.copingCounts(resisted)
+    item { MetricRow("Resisted urges", resisted.size.toString()) }
+    resisted.mapNotNull { it.urgeDurationMinutes }.takeIf { it.isNotEmpty() }?.let { durations -> item { MetricRow("Average recorded duration", "${durations.average().toInt()}m") } }
+    if (counts.isEmpty()) item { EmptyGuideCard("No coping strategies recorded in this interval.") }
+    else items(counts) { (name, count) -> MetricRow(name, count.toString()) }
+    item { InsightObservation(if (counts.sumOf { it.second } >= 5) "Most frequently recorded helper: ${counts.first().first}." else "Five recorded coping strategies are required before the clipboard forms an opinion.") }
+}
+
+private fun LazyListScope.costItems(entries: List<LogEntry>, packPrice: Double?, packSize: Int, currency: String) {
+    val spent = Analytics.moneySpent(entries, packPrice, packSize)
+    item { MetricCard("MONEY SPENT", spent?.let { "$currency${"%.2f".format(it)}" } ?: "Not configured", Modifier.fillMaxWidth()) }
+    item { Text(if (packPrice == null) "Set pack price and pack size in Settings to calculate spending." else "Based on $currency${"%.2f".format(packPrice)} per $packSize cigarettes. No hypothetical savings are calculated.", color = TowelTeal) }
+}
+
+@Composable private fun EmptyGuideCard(text: String) = Card(Modifier.fillMaxWidth()) { Text(text, Modifier.padding(16.dp)) }
+@Composable private fun InsightObservation(text: String) = Card(colors = CardDefaults.cardColors(containerColor = TowelTeal.copy(alpha = .12f)), modifier = Modifier.fillMaxWidth()) { Text(text, Modifier.padding(16.dp)) }
+
+@Composable private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(modifier) { Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, color = FriendlyYellow, fontSize = 24.sp, fontWeight = FontWeight.Black); Text(label, fontSize = 9.sp)
+    } }
+}
+@Composable private fun MetricRow(label: String, value: String) = Card(Modifier.fillMaxWidth()) {
+    Row(Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label); Text(value, color = TowelTeal, fontWeight = FontWeight.Bold) }
+}
+
+@Composable
+private fun BarChart(totals: List<DayTotal>, metric: InsightMetric, modifier: Modifier) {
+    fun DayTotal.value() = if (metric == InsightMetric.EQUIVALENTS) amount else smokingEvents.toDouble()
+    val maximum = max(1.0, totals.maxOfOrNull { it.value() } ?: 1.0)
+    Canvas(modifier.padding(top = 18.dp, bottom = 16.dp)) {
+        val step = size.width / totals.size.coerceAtLeast(1)
+        totals.forEachIndexed { index, day ->
+            val height = (day.value() / maximum * size.height).toFloat()
+            drawLine(FriendlyYellow, Offset(step * index + step / 2, size.height), Offset(step * index + step / 2, size.height - height),
+                strokeWidth = (step * .55f).coerceAtLeast(3f), cap = StrokeCap.Round)
+            if (day.resisted > 0) drawCircle(TowelTeal, 5.dp.toPx(), Offset(step * index + step / 2, (size.height - height - 12.dp.toPx()).coerceAtLeast(5.dp.toPx())))
+        }
+    }
+}
+
+@Composable
+private fun CalendarHeatmap(totals: List<DayTotal>, metric: InsightMetric) {
+    fun DayTotal.value() = if (metric == InsightMetric.EQUIVALENTS) amount else smokingEvents.toDouble()
+    val maximum = totals.maxOfOrNull { it.value() }?.coerceAtLeast(1.0) ?: 1.0
+    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+        Text("Calendar heatmap", fontWeight = FontWeight.Bold)
+        Canvas(Modifier.fillMaxWidth().height((((totals.size + 6) / 7).coerceAtLeast(1) * 28).dp)) {
+            val cellWidth = size.width / 7
+            val cellHeight = 28.dp.toPx()
+            totals.forEachIndexed { index, day ->
+                val intensity = (day.value() / maximum).toFloat()
+                drawCircle(
+                    color = FriendlyYellow.copy(alpha = .15f + intensity * .85f),
+                    radius = 8.dp.toPx(),
+                    center = Offset((index % 7 + .5f) * cellWidth, (index / 7 + .5f) * cellHeight),
+                )
+            }
+        }
+        Text("Darker stars indicate more ${metric.label.lowercase()}.", color = TowelTeal, fontSize = 11.sp)
+    } }
+}
+
+@Composable
+private fun HourlyChart(values: List<Int>, modifier: Modifier) {
+    val maximum = values.maxOrNull()?.coerceAtLeast(1) ?: 1
+    Canvas(modifier.padding(top = 12.dp)) {
+        val step = size.width / 24
+        values.forEachIndexed { hour, value ->
+            val height = value.toFloat() / maximum * size.height
+            drawLine(
+                color = TowelTeal,
+                start = Offset(step * hour + step / 2, size.height),
+                end = Offset(step * hour + step / 2, size.height - height),
+                strokeWidth = (step * .55f).coerceAtLeast(2f),
+                cap = StrokeCap.Round,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CustomRangeDialog(
+    initialRange: Pair<LocalDate, LocalDate>?,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalDate, LocalDate) -> Unit,
+) {
+    fun LocalDate.utcMillis() = atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+    val state = rememberDateRangePickerState(
+        initialSelectedStartDateMillis = initialRange?.first?.utcMillis(),
+        initialSelectedEndDateMillis = initialRange?.second?.utcMillis(),
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = state.selectedStartDateMillis != null,
+                onClick = {
+                    val start = Instant.ofEpochMilli(state.selectedStartDateMillis!!).atZone(ZoneOffset.UTC).toLocalDate()
+                    val end = state.selectedEndDateMillis?.let {
+                        Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
+                    } ?: start
+                    onConfirm(start, end)
+                }
+            ) { Text("USE RANGE") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("CANCEL") } },
+    ) {
+        DateRangePicker(
+            state = state,
+            title = { Text("Choose a date interval", Modifier.padding(16.dp)) },
+            headline = { Text("The Guide accepts a beginning and an end", Modifier.padding(horizontal = 16.dp)) },
+            showModeToggle = false,
+        )
+    }
+}
+
+@Composable
+private fun SettingsScreen(
+    entries: List<LogEntry>,
+    target: Double?,
+    dayBoundary: LocalTime,
+    packPrice: Double?,
+    packSize: Int,
+    currency: String,
+    bulletin: String,
+    vm: MainViewModel,
+) {
+    val context = LocalContext.current
+    var targetText by remember(target) { mutableStateOf(target?.let(::formatAmount) ?: "") }
+    var message by remember { mutableStateOf<String?>(null) }
+    var confirmImport by remember { mutableStateOf(false) }
+    var showBoundaryPicker by remember { mutableStateOf(false) }
+    var packPriceText by remember(packPrice) { mutableStateOf(packPrice?.toString().orEmpty()) }
+    var packSizeText by remember(packSize) { mutableStateOf(packSize.toString()) }
+    var currencyText by remember(currency) { mutableStateOf(currency) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        uri?.let {
+            runCatching { context.contentResolver.openOutputStream(it)?.bufferedWriter()?.use { writer ->
+                writer.write(Stats.csv(entries, ZoneId.systemDefault()))
+            } }.onSuccess { message = "Log exported. Your data has its towel." }.onFailure { message = "Export failed: ${it.localizedMessage}" }
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let {
+            runCatching { context.contentResolver.openInputStream(it)?.bufferedReader()?.use { reader -> reader.readText() }
+                ?: error("The selected file could not be read")
+            }.onSuccess { csv ->
+                vm.importCsv(csv, ZoneId.systemDefault()) { result ->
+                    message = result.fold(
+                        onSuccess = { count -> "$count entries imported. The old log has left the galaxy." },
+                        onFailure = { error -> "Import failed; your existing log is unchanged. ${error.message}" },
+                    )
+                }
+            }.onFailure { error -> message = "Import failed; your existing log is unchanged. ${error.message}" }
+        }
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { Text("Guide settings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+        item { CosmicBulletin(bulletin) }
+        item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+            Text("OPTIONAL DAILY TARGET", color = TowelTeal, fontWeight = FontWeight.Bold)
+            Text("A navigational aid, never a verdict.", fontSize = 13.sp)
+            OutlinedTextField(targetText, { targetText = it.filter { char -> char.isDigit() || char == '.' } },
+                label = { Text("Cigarette equivalents") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Row { Button(onClick = { targetText.toDoubleOrNull()?.takeIf { it > 0 }?.let(vm::setTarget) }, enabled = targetText.toDoubleOrNull()?.let { it > 0 } == true) { Text("SAVE TARGET") }
+                TextButton(onClick = { targetText = ""; vm.setTarget(null) }) { Text("CLEAR") } }
+        } } }
+        item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+            Text("MY DAY ROLLS OVER AT", color = TowelTeal, fontWeight = FontWeight.Bold)
+            Text("After-midnight entries before this time count toward the previous tracking day.", fontSize = 13.sp)
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = { showBoundaryPicker = true }) {
+                Icon(Icons.Default.Schedule, null)
+                Spacer(Modifier.width(8.dp))
+                Text(formatBoundary(dayBoundary))
+            }
+            Text("This regroups daily figures without changing any recorded date or time.", fontSize = 12.sp, color = TowelTeal)
+        } } }
+        item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("COSTS", color = TowelTeal, fontWeight = FontWeight.Bold)
+            Text("Used only to estimate money actually spent. The Guide will not invent savings.", fontSize = 13.sp)
+            OutlinedTextField(packPriceText, { packPriceText = it.filter { char -> char.isDigit() || char == '.' } }, label = { Text("Pack price") }, singleLine = true)
+            OutlinedTextField(packSizeText, { packSizeText = it.filter(Char::isDigit) }, label = { Text("Cigarettes per pack") }, singleLine = true)
+            OutlinedTextField(currencyText, { currencyText = it.take(4) }, label = { Text("Currency symbol") }, singleLine = true)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    enabled = packPriceText.toDoubleOrNull()?.let { it > 0 } == true && packSizeText.toIntOrNull()?.let { it > 0 } == true,
+                    onClick = { vm.setCostSettings(packPriceText.toDoubleOrNull(), packSizeText.toIntOrNull() ?: 20, currencyText) },
+                ) { Text("SAVE COSTS") }
+                TextButton(onClick = {
+                    packPriceText = ""
+                    vm.setCostSettings(null, packSizeText.toIntOrNull()?.takeIf { it > 0 } ?: 20, currencyText)
+                }) { Text("CLEAR PRICE") }
+            }
+        } } }
+        item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+            Text("YOUR DATA", color = TowelTeal, fontWeight = FontWeight.Bold)
+            Text("Stored locally on this device. Export a portable copy whenever you like.")
+            Spacer(Modifier.height(10.dp)); Button(onClick = { exportLauncher.launch("mostly-harmless-log.csv") }, enabled = entries.isNotEmpty()) {
+                Icon(Icons.Default.FileDownload, null); Spacer(Modifier.width(8.dp)); Text("EXPORT CSV")
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = { confirmImport = true }) {
+                Icon(Icons.Default.FileUpload, null); Spacer(Modifier.width(8.dp)); Text("IMPORT CSV")
+            }
+            message?.let { Text(it, color = TowelTeal, fontSize = 12.sp) }
+        } } }
+        item { Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+            Text("PRIVACY & ACCESSIBILITY", color = TowelTeal, fontWeight = FontWeight.Bold)
+            Text("No account, advertisements, analytics, location, or internet permission. Large controls, system font scaling, and dark colours are built in.")
+        } } }
+        item { Text("Mostly Harmless • Version 2.0\nBuilt for honest logging across this unfashionable end of the galaxy.", textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(), color = TowelTeal) }
+    }
+    if (confirmImport) AlertDialog(
+        onDismissRequest = { confirmImport = false },
+        icon = { Icon(Icons.Default.Warning, null) },
+        title = { Text("Replace the entire ship's log?") },
+        text = { Text("Importing a CSV permanently removes every current smoking and resisted-urge entry, then replaces them with the imported entries. Export a backup first if the existing log matters.") },
+        confirmButton = { Button(onClick = {
+            confirmImport = false
+            importLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "text/plain"))
+        }) { Text("CHOOSE CSV & REPLACE") } },
+        dismissButton = { TextButton(onClick = { confirmImport = false }) { Text("KEEP CURRENT LOG") } },
+    )
+    if (showBoundaryPicker) DayBoundaryDialog(
+        initialTime = dayBoundary,
+        onDismiss = { showBoundaryPicker = false },
+        onConfirm = { selected ->
+            vm.setDayBoundary(selected)
+            showBoundaryPicker = false
+        },
+    )
+}
+
+@Composable
+private fun DayBoundaryDialog(
+    initialTime: LocalTime,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalTime) -> Unit,
+) {
+    val state = rememberTimePickerState(
+        initialHour = initialTime.hour,
+        initialMinute = initialTime.minute,
+        is24Hour = true,
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("When does your day roll over?") },
+        text = { Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Entries after midnight but before this time stay with the previous tracking day.")
+            Spacer(Modifier.height(12.dp))
+            TimeInput(state = state)
+        } },
+        confirmButton = { Button(onClick = { onConfirm(LocalTime.of(state.hour, state.minute)) }) { Text("USE TIME") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("CANCEL") } },
+    )
+}
+
+@Composable private fun EmptyState(text: String) = Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(text, color = TowelTeal, textAlign = TextAlign.Center) }
+@Composable private fun CosmicBulletin(message: String) = Card(
+    colors = CardDefaults.cardColors(containerColor = TowelTeal.copy(alpha = .12f)),
+    modifier = Modifier.fillMaxWidth()
+) {
+    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+        Icon(Icons.Default.Campaign, contentDescription = null, tint = TowelTeal)
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text("MESSAGE FROM THE GUIDE", color = TowelTeal, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+            Text(message, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+private fun formatAmount(value: Double) = if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(value)
+private fun formatBoundary(value: LocalTime) = value.format(DateTimeFormatter.ofPattern("HH:mm"))
+private fun formatMinutes(value: Long): String = when {
+    value < 60 -> "${value}m"
+    value < 24 * 60 -> "${value / 60}h ${value % 60}m"
+    else -> "${value / (24 * 60)}d ${(value % (24 * 60)) / 60}h"
+}
+private fun formatMinutesSigned(value: Long) = (if (value < 0) "−" else "") + formatMinutes(kotlin.math.abs(value))
+private fun formatClockMinute(value: Int) = "%02d:%02d".format((value / 60) % 24, value % 60)
+private fun signedAmount(value: Double) = when {
+    value > 0 -> "+${formatAmount(value)}"
+    else -> formatAmount(value)
+}
+private fun comparisonPercent(current: Double, previous: Double): String = when {
+    previous == 0.0 && current == 0.0 -> "no change"
+    previous == 0.0 -> "no previous-period baseline"
+    else -> "%+.1f%%".format((current - previous) / previous * 100)
+}
