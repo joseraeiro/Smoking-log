@@ -17,21 +17,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val dayBoundary = settings.dayBoundaryMinutes
         .map { LocalTime.of(it / 60, it % 60) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LocalTime.MIDNIGHT)
+    val packPrice = settings.packPrice.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val packSize = settings.packSize.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 20)
+    val currency = settings.currency.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "€")
 
-    fun log(amount: Double, onLogged: (LogEntry) -> Unit = {}) = viewModelScope.launch {
-        val entry = LogEntry(timestamp = System.currentTimeMillis(), type = EntryType.SMOKED, amount = amount)
+    fun log(amount: Double, trigger: String = "", onLogged: (LogEntry) -> Unit = {}) = viewModelScope.launch {
+        val entry = LogEntry(timestamp = System.currentTimeMillis(), type = EntryType.SMOKED, amount = amount, trigger = trigger)
         val id = dao.insert(entry)
         onLogged(entry.copy(id = id))
     }
-    fun resist(note: String, strength: Int?) = viewModelScope.launch {
+    fun resist(
+        note: String,
+        strength: Int?,
+        trigger: String,
+        copingStrategy: String,
+        durationMinutes: Int?,
+        feelingAfter: String,
+    ) = viewModelScope.launch {
         dao.insert(LogEntry(timestamp = System.currentTimeMillis(), type = EntryType.RESISTED,
-            note = note.trim(), urgeStrength = strength))
+            note = note.trim(), urgeStrength = strength, trigger = trigger,
+            copingStrategy = copingStrategy, urgeDurationMinutes = durationMinutes,
+            feelingAfter = feelingAfter.trim()))
     }
     fun delete(entry: LogEntry) = viewModelScope.launch { dao.delete(entry) }
     fun update(entry: LogEntry) = viewModelScope.launch { dao.update(entry) }
     fun setTarget(value: Double?) = viewModelScope.launch { settings.setDailyTarget(value) }
     fun setDayBoundary(value: LocalTime) = viewModelScope.launch {
         settings.setDayBoundary(value.hour * 60 + value.minute)
+    }
+    fun setCostSettings(packPrice: Double?, packSize: Int, currency: String) = viewModelScope.launch {
+        settings.setCostSettings(packPrice, packSize, currency)
     }
     fun importCsv(csv: String, zone: ZoneId, onComplete: (Result<Int>) -> Unit) = viewModelScope.launch {
         onComplete(runCatching {

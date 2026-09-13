@@ -6,6 +6,8 @@ import com.example.smokinglog.data.AppDatabase
 
 class SmokingLogApplication : Application() {
     val database by lazy {
-        Room.databaseBuilder(this, AppDatabase::class.java, "smoking-log.db").build()
+        Room.databaseBuilder(this, AppDatabase::class.java, "smoking-log.db")
+            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .build()
     }
 }

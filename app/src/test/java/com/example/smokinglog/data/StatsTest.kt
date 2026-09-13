@@ -73,10 +73,24 @@ class StatsTest {
             LogEntry(timestamp = now.toEpochMilli(), type = EntryType.SMOKED, amount = .5,
                 note = "Tense, then \"fine\"\nand calmer"),
             LogEntry(timestamp = now.plusSeconds(60).toEpochMilli(), type = EntryType.RESISTED,
-                note = "Walked", urgeStrength = 4),
+                note = "Walked", urgeStrength = 4, trigger = "Coffee", copingStrategy = "Walked",
+                urgeDurationMinutes = 8, feelingAfter = "Calmer"),
         )
         val parsed = Stats.parseCsv(Stats.csv(original, zone), zone)
         assertEquals(original.map { it.copy(id = 0) }, parsed)
+    }
+
+    @Test fun `legacy six column csv remains importable`() {
+        val legacy = """date,time,type,amount,note,urge_strength
+            |2026-09-10,12:00:00,SMOKED,0.5,"Coffee break",
+            |2026-09-10,13:00:00,RESISTED,0.0,"Walked",4
+            |""".trimMargin()
+
+        val imported = Stats.parseCsv(legacy, zone)
+
+        assertEquals(2, imported.size)
+        assertEquals("", imported[0].trigger)
+        assertEquals("", imported[1].copingStrategy)
     }
 
     @Test fun `invalid csv is rejected before it can be imported`() {

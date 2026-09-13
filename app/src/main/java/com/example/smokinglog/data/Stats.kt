@@ -39,29 +39,39 @@ object Stats {
     }
 
     fun csv(entries: List<LogEntry>, zone: ZoneId): String = buildString {
-        appendLine("date,time,type,amount,note,urge_strength")
+        appendLine("date,time,type,amount,note,urge_strength,trigger,coping_strategy,urge_duration_minutes,feeling_after")
         entries.sortedBy { it.timestamp }.forEach { entry ->
             val time = Instant.ofEpochMilli(entry.timestamp).atZone(zone)
             fun escaped(value: String) = "\"${value.replace("\"", "\"\"")}\""
-            appendLine(listOf(time.toLocalDate(), time.toLocalTime().withNano(0), entry.type,
-                entry.amount, escaped(entry.note), entry.urgeStrength ?: "").joinToString(","))
+            appendLine(listOf(
+                time.toLocalDate(), time.toLocalTime().withNano(0), entry.type, entry.amount,
+                escaped(entry.note), entry.urgeStrength ?: "", escaped(entry.trigger),
+                escaped(entry.copingStrategy), entry.urgeDurationMinutes ?: "", escaped(entry.feelingAfter),
+            ).joinToString(","))
         }
     }
 
     fun parseCsv(csv: String, zone: ZoneId): List<LogEntry> {
         val rows = csvRows(csv.removePrefix("\uFEFF"))
         require(rows.isNotEmpty()) { "The CSV is empty" }
-        require(rows.first() == listOf("date", "time", "type", "amount", "note", "urge_strength")) {
+        val legacyHeader = listOf("date", "time", "type", "amount", "note", "urge_strength")
+        val currentHeader = legacyHeader + listOf("trigger", "coping_strategy", "urge_duration_minutes", "feeling_after")
+        val header = rows.first()
+        require(header == legacyHeader || header == currentHeader) {
             "This does not look like a Mostly Harmless export"
         }
+        val isCurrent = header == currentHeader
         return rows.drop(1).filterNot { row -> row.all(String::isBlank) }.mapIndexed { index, row ->
-            require(row.size == 6) { "Row ${index + 2} has ${row.size} columns instead of 6" }
+            val expectedColumns = if (isCurrent) 10 else 6
+            require(row.size == expectedColumns) { "Row ${index + 2} has ${row.size} columns instead of $expectedColumns" }
             try {
                 val type = EntryType.valueOf(row[2])
                 val amount = row[3].toDouble()
                 require(amount.isFinite() && amount >= 0.0) { "amount must be a finite non-negative number" }
                 val strength = row[5].takeIf(String::isNotBlank)?.toInt()
                 require(strength == null || strength in 1..5) { "urge strength must be between 1 and 5" }
+                val duration = row.getOrNull(8)?.takeIf(String::isNotBlank)?.toInt()
+                require(duration == null || duration >= 0) { "urge duration must be non-negative" }
                 LogEntry(
                     timestamp = LocalDateTime.of(LocalDate.parse(row[0]), LocalTime.parse(row[1]))
                         .atZone(zone).toInstant().toEpochMilli(),
@@ -69,6 +79,10 @@ object Stats {
                     amount = amount,
                     note = row[4],
                     urgeStrength = strength,
+                    trigger = row.getOrElse(6) { "" },
+                    copingStrategy = row.getOrElse(7) { "" },
+                    urgeDurationMinutes = duration,
+                    feelingAfter = row.getOrElse(9) { "" },
                 )
             } catch (error: IllegalArgumentException) {
                 throw IllegalArgumentException("Invalid data on row ${index + 2}: ${error.message}", error)

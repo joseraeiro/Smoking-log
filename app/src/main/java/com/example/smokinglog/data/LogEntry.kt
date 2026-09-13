@@ -13,4 +13,8 @@ data class LogEntry(
     val amount: Double = 0.0,
     val note: String = "",
     val urgeStrength: Int? = null,
+    val trigger: String = "",
+    val copingStrategy: String = "",
+    val urgeDurationMinutes: Int? = null,
+    val feelingAfter: String = "",
 )
